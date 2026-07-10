@@ -1,5 +1,7 @@
 #include "neomoonclock_timer.h"
 
+#include "util/notification.h"
+
 void timer_start_pause_button_action(GtkWidget* _widget, neomoonclock_t* _neomoonclock) {
 	gdouble hour_duration = gtk_spin_button_get_value(GTK_SPIN_BUTTON(_neomoonclock->gui.hour_spin_button)),
 			minute_duration = gtk_spin_button_get_value(GTK_SPIN_BUTTON(_neomoonclock->gui.minute_spin_button)),
