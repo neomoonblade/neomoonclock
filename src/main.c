@@ -2,7 +2,8 @@
 
 #include <stdio.h>
 #include <time.h>
-#include "neomoonclock.h"
+
+#include "core/neomoonclock.h"
 
 static void activate(GtkApplication* _app, gpointer _data) {
 	neomoonclock_t* neomoonclock = (neomoonclock_t*) _data;
