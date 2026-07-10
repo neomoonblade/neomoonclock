@@ -2,6 +2,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <time.h>
 #include <gtk/gtk.h>
 #include <pthread.h>
 
@@ -50,11 +51,16 @@ typedef struct neomoonclock_gui {
 
 typedef struct neomoonclock {
 	neomoonclock_gui_t gui;
+	
 	uint64_t timer_time_in_seconds,
 			timer_counter_in_seconds;
 	bool timer_running;
 	bool timer_viewing;
 	pthread_t timer_thread;
+	
+	bool stopwatch_running;
+	uint64_t stopwatch_start_time_ns;
+	pthread_t stopwatch_thread;
 } neomoonclock_t;
 
 void neomoonclock_init(neomoonclock_t* _neomoonclock);
