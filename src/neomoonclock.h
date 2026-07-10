@@ -47,10 +47,8 @@ typedef struct neomoonclock_gui {
 			*	alarm_minutes_label;
 	GtkWidget* alarm_hour_spin_button,
 			*	alarm_minute_spin_button;
-	
 	GtkWidget* alarm_5min_reminder_check_button;
 	GtkWidget* alarm_enabled_check_button;
-	
 } neomoonclock_gui_t;
 
 typedef struct neomoonclock {
@@ -68,6 +66,10 @@ typedef struct neomoonclock {
 	uint64_t stopwatch_paused_time_ns;
 	uint64_t stopwatch_elapsed_time_ns;
 	pthread_t stopwatch_thread;
+	
+	bool alarm_running;
+	bool alarm_5min_reminded;
+	pthread_t alarm_thread;
 } neomoonclock_t;
 
 void neomoonclock_init(neomoonclock_t* _neomoonclock);

@@ -22,6 +22,9 @@ void neomoonclock_init(neomoonclock_t* _neomoonclock) {
 	_neomoonclock->stopwatch_start_time_ns = 0;
 	_neomoonclock->stopwatch_paused_time_ns = 0;
 	_neomoonclock->stopwatch_elapsed_time_ns = 0;
+	
+	_neomoonclock->alarm_running = false;
+	_neomoonclock->alarm_5min_reminded = false;
 }
 
 void neomoonclock_gui_init(neomoonclock_gui_t* _neomoonclock_gui, GtkApplication* _app) {
@@ -130,8 +133,10 @@ void neomoonclock_gui_init(neomoonclock_gui_t* _neomoonclock_gui, GtkApplication
 	
 	// --- alarm
 	GtkWidget* alarm_frame = gtk_frame_new("Alarm");
+	_neomoonclock_gui->alarm_frame = alarm_frame;
 	
 	GtkWidget* alarm_grid = gtk_grid_new();
+	_neomoonclock_gui->alarm_grid = alarm_grid;
 	gtk_grid_set_column_homogeneous(GTK_GRID(alarm_grid), TRUE);
 	gtk_grid_set_column_spacing(GTK_GRID(alarm_grid), 5);
 	gtk_grid_set_row_spacing(GTK_GRID(alarm_grid), 5);
@@ -139,11 +144,19 @@ void neomoonclock_gui_init(neomoonclock_gui_t* _neomoonclock_gui, GtkApplication
 	
 	GtkWidget* alarm_hours_label = gtk_label_new("Hours"),
 			*	alarm_minutes_label = gtk_label_new("Minutes");
+	_neomoonclock_gui->alarm_hours_label = alarm_hours_label;
+	_neomoonclock_gui->alarm_minutes_label = alarm_minutes_label;
+	
 	GtkWidget* alarm_hour_spin_button = gtk_spin_button_new(gtk_adjustment_new(0, 0, 23, 1, 2, 0), 1, 0),
 			*	alarm_minute_spin_button = gtk_spin_button_new(gtk_adjustment_new(0, 0, 59, 1, 2, 0), 1, 0);
+	_neomoonclock_gui->alarm_hour_spin_button = alarm_hour_spin_button;
+	_neomoonclock_gui->alarm_minute_spin_button = alarm_minute_spin_button;
 	
 	GtkWidget* alarm_5min_reminder_check_button = gtk_check_button_new_with_label("Remind 5 minutes before alarm");
+	_neomoonclock_gui->alarm_5min_reminder_check_button = alarm_5min_reminder_check_button;
+	
 	GtkWidget* alarm_enabled_check_button = gtk_check_button_new_with_label("Enabled");
+	_neomoonclock_gui->alarm_enabled_check_button = alarm_enabled_check_button;
 	
 	gtk_container_add(GTK_CONTAINER(alarm_grid), alarm_hours_label);
 	gtk_grid_attach_next_to(GTK_GRID(alarm_grid), alarm_minutes_label, alarm_hours_label, GTK_POS_RIGHT, 1, 1);
@@ -174,6 +187,9 @@ static void stopwatch_view_button_action(GtkWidget* _widget, neomoonclock_t* _ne
 static void stopwatch_view_window_close_action(GtkWidget* _widget, neomoonclock_t* _neomoonclock);
 static void stopwatch_update_gui(neomoonclock_t* _neomoonclock);
 
+static void alarm_enabled_check_button_action(GtkWidget* _widget, neomoonclock_t* _neomoonclock);
+static void* alarm_run(void* _arg);
+
 void neomoonclock_gui_init_functionality(neomoonclock_t* _neomoonclock) {
 	// --- timer
 	g_signal_connect(_neomoonclock->gui.timer_start_pause_button, "clicked", G_CALLBACK(timer_start_pause_button_action), _neomoonclock);
@@ -184,6 +200,9 @@ void neomoonclock_gui_init_functionality(neomoonclock_t* _neomoonclock) {
 	g_signal_connect(_neomoonclock->gui.stopwatch_start_pause_button, "clicked", G_CALLBACK(stopwatch_start_pause_button_action), _neomoonclock);
 	g_signal_connect(_neomoonclock->gui.stopwatch_reset_button, "clicked", G_CALLBACK(stopwatch_reset_button_action), _neomoonclock);
 	g_signal_connect(_neomoonclock->gui.stopwatch_view_button, "clicked", G_CALLBACK(stopwatch_view_button_action), _neomoonclock);
+	
+	// --- alarm
+	g_signal_connect(_neomoonclock->gui.alarm_enabled_check_button, "toggled", G_CALLBACK(alarm_enabled_check_button_action), _neomoonclock);
 }
 
 // --- timer
@@ -464,3 +483,61 @@ static void stopwatch_update_gui(neomoonclock_t* _neomoonclock) {
 		gtk_label_set_text(GTK_LABEL(_neomoonclock->gui.stopwatch_view_window_time_display_label), time_display_label_string);
 	}
 }
+
+// --- alarm
+
+static void alarm_enabled_check_button_action(GtkWidget* _widget, neomoonclock_t* _neomoonclock) {
+	if(gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(_neomoonclock->gui.alarm_enabled_check_button))) {
+		gtk_widget_set_sensitive(_neomoonclock->gui.alarm_hour_spin_button, FALSE);
+		gtk_widget_set_sensitive(_neomoonclock->gui.alarm_minute_spin_button, FALSE);
+		
+		_neomoonclock->alarm_running = true;
+		_neomoonclock->alarm_5min_reminded = false;
+		
+		pthread_create(&_neomoonclock->alarm_thread, NULL, alarm_run, _neomoonclock);
+		pthread_detach(_neomoonclock->alarm_thread);
+	} else {
+		_neomoonclock->alarm_running = false;
+		gtk_widget_set_sensitive(_neomoonclock->gui.alarm_hour_spin_button, TRUE);
+		gtk_widget_set_sensitive(_neomoonclock->gui.alarm_minute_spin_button, TRUE);
+	}
+}
+
+static void* alarm_run(void* _arg) {
+	neomoonclock_t* neomoonclock = (neomoonclock_t*) _arg;
+	
+	struct timespec duration = {1, 0}, 
+					remaining;
+	
+	int alarm_hour = gtk_spin_button_get_value(GTK_SPIN_BUTTON(neomoonclock->gui.alarm_hour_spin_button));
+	int alarm_minute = gtk_spin_button_get_value(GTK_SPIN_BUTTON(neomoonclock->gui.alarm_minute_spin_button));
+	int alarm_total_minute = alarm_hour * 60 + alarm_minute;
+	
+	while(neomoonclock->alarm_running) {
+		time_t current_time = time(NULL);
+		struct tm* current_local_time = localtime(&current_time);
+		
+		int current_hour =  current_local_time->tm_hour;
+		int current_minute = current_local_time->tm_min;
+		int current_total_minute = current_hour * 60 + current_minute;
+		
+		if(gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(neomoonclock->gui.alarm_5min_reminder_check_button)) &&
+			current_total_minute == alarm_total_minute - 5 &&
+			neomoonclock->alarm_5min_reminded == false) {
+			neomoonclock->alarm_5min_reminded = true;
+			notification_notify("neomoonclock alarm", "Heads up! It's 5 minutes before the alarm rings");
+		}
+		
+		if(alarm_total_minute == current_total_minute) {
+			notification_notify("neomoonclock alarm", "Alarm!");
+			neomoonclock->alarm_running = false;
+			gtk_widget_set_sensitive(neomoonclock->gui.alarm_hour_spin_button, TRUE);
+			gtk_widget_set_sensitive(neomoonclock->gui.alarm_minute_spin_button, TRUE);
+		}
+		
+		nanosleep(&duration, &remaining);
+	}
+	
+	return NULL;
+}
+
