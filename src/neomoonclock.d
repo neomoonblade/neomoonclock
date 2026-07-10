@@ -618,7 +618,8 @@ src/neomoonclock.o: src/neomoonclock.c src/neomoonclock.h \
  /usr/include/gtk-3.0/gtk/deprecated/gtkvscale.h \
  /usr/include/gtk-3.0/gtk/deprecated/gtkvscrollbar.h \
  /usr/include/gtk-3.0/gtk/deprecated/gtkvseparator.h \
- /usr/include/gtk-3.0/gtk/gtk-autocleanups.h src/util/notification.h
+ /usr/include/gtk-3.0/gtk/gtk-autocleanups.h src/util/notification.h \
+ src/util/timeutil.h
 src/neomoonclock.h:
 /usr/include/gtk-3.0/gtk/gtk.h:
 /usr/include/gtk-3.0/gdk/gdk.h:
@@ -1289,3 +1290,4 @@ src/neomoonclock.h:
 /usr/include/gtk-3.0/gtk/deprecated/gtkvseparator.h:
 /usr/include/gtk-3.0/gtk/gtk-autocleanups.h:
 src/util/notification.h:
+src/util/timeutil.h:

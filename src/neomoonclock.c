@@ -4,6 +4,7 @@
 #include <time.h>
 
 #include "util/notification.h"
+#include "util/timeutil.h"
 
 void neomoonclock_init(neomoonclock_t* _neomoonclock) {
 	_neomoonclock->timer_running = false;
@@ -15,6 +16,12 @@ void neomoonclock_init(neomoonclock_t* _neomoonclock) {
 	_neomoonclock->gui.timer_view_window_grid = NULL;
 	_neomoonclock->gui.timer_view_window_time_display_label = NULL;
 	_neomoonclock->gui.timer_view_window_progress_bar = NULL;
+	
+	_neomoonclock->stopwatch_running = false;
+	_neomoonclock->stopwatch_viewing = false;
+	_neomoonclock->stopwatch_start_time_ns = 0;
+	_neomoonclock->stopwatch_paused_time_ns = 0;
+	_neomoonclock->stopwatch_elapsed_time_ns = 0;
 }
 
 void neomoonclock_gui_init(neomoonclock_gui_t* _neomoonclock_gui, GtkApplication* _app) {
@@ -87,24 +94,31 @@ void neomoonclock_gui_init(neomoonclock_gui_t* _neomoonclock_gui, GtkApplication
 	
 	// --- stopwatch
 	GtkWidget* stopwatch_frame = gtk_frame_new("Stopwatch");
+	_neomoonclock_gui->stopwatch_frame = stopwatch_frame;
 	
 	GtkWidget* stopwatch_grid = gtk_grid_new();
+	_neomoonclock_gui->stopwatch_grid = stopwatch_grid;
 	gtk_grid_set_column_homogeneous(GTK_GRID(stopwatch_grid), TRUE);
 	gtk_grid_set_column_spacing(GTK_GRID(stopwatch_grid), 5);
 	gtk_grid_set_row_spacing(GTK_GRID(stopwatch_grid), 5);
 	gtk_container_set_border_width(GTK_CONTAINER(stopwatch_grid), 5);
 	
 	GtkWidget* stopwatch_time_label = gtk_label_new("Time: ");
+	_neomoonclock_gui->stopwatch_time_label = stopwatch_time_label;
 	gtk_widget_set_size_request(stopwatch_time_label, 100, 30);
 	
-	GtkWidget* stopwatch_time_display_label = gtk_label_new("00:00:00.00");
+	GtkWidget* stopwatch_time_display_label = gtk_label_new("00:00:00.000");
+	_neomoonclock_gui->stopwatch_time_display_label = stopwatch_time_display_label;
 	gtk_label_set_width_chars(GTK_LABEL(stopwatch_time_display_label), 10);
 	gtk_label_set_justify(GTK_LABEL(stopwatch_time_display_label), GTK_JUSTIFY_CENTER);
 	
 	GtkWidget* stopwatch_start_pause_button = gtk_button_new_with_label("Start/Pause"),
 			* stopwatch_reset_button = gtk_button_new_with_label("Reset"),
 			* stopwatch_view_button = gtk_button_new_with_label("View");
-			
+	_neomoonclock_gui->stopwatch_start_pause_button = stopwatch_start_pause_button;
+	_neomoonclock_gui->stopwatch_reset_button = stopwatch_reset_button;
+	_neomoonclock_gui->stopwatch_view_button = stopwatch_view_button;
+	
 	gtk_container_add(GTK_CONTAINER(stopwatch_grid), stopwatch_time_label);
 	gtk_grid_attach_next_to(GTK_GRID(stopwatch_grid), stopwatch_time_display_label, stopwatch_time_label, GTK_POS_RIGHT, 2, 1);
 	gtk_grid_attach_next_to(GTK_GRID(stopwatch_grid), stopwatch_start_pause_button, stopwatch_time_label, GTK_POS_BOTTOM, 1, 1);
@@ -153,12 +167,26 @@ static void timer_view_window_close_action(GtkWidget* _widget, neomoonclock_t* _
 static void timer_update_gui(neomoonclock_t* _neomoonclock);
 static void timer_finished(neomoonclock_t* _neomoonclock);
 
+static void stopwatch_start_pause_button_action(GtkWidget* _widget, neomoonclock_t* _neomoonclock);
+static void* stopwatch_run(void* _arg);
+static void stopwatch_reset_button_action(GtkWidget* _widget, neomoonclock_t* _neomoonclock);
+static void stopwatch_view_button_action(GtkWidget* _widget, neomoonclock_t* _neomoonclock);
+static void stopwatch_view_window_close_action(GtkWidget* _widget, neomoonclock_t* _neomoonclock);
+static void stopwatch_update_gui(neomoonclock_t* _neomoonclock);
+
 void neomoonclock_gui_init_functionality(neomoonclock_t* _neomoonclock) {
 	// --- timer
 	g_signal_connect(_neomoonclock->gui.timer_start_pause_button, "clicked", G_CALLBACK(timer_start_pause_button_action), _neomoonclock);
 	g_signal_connect(_neomoonclock->gui.timer_reset_button, "clicked", G_CALLBACK(timer_reset_button_action), _neomoonclock);
 	g_signal_connect(_neomoonclock->gui.timer_view_button, "clicked", G_CALLBACK(timer_view_button_action), _neomoonclock);
+	
+	// --- stopwatch
+	g_signal_connect(_neomoonclock->gui.stopwatch_start_pause_button, "clicked", G_CALLBACK(stopwatch_start_pause_button_action), _neomoonclock);
+	g_signal_connect(_neomoonclock->gui.stopwatch_reset_button, "clicked", G_CALLBACK(stopwatch_reset_button_action), _neomoonclock);
+	g_signal_connect(_neomoonclock->gui.stopwatch_view_button, "clicked", G_CALLBACK(stopwatch_view_button_action), _neomoonclock);
 }
+
+// --- timer
 
 static void timer_start_pause_button_action(GtkWidget* _widget, neomoonclock_t* _neomoonclock) {
 	gdouble hour_duration = gtk_spin_button_get_value(GTK_SPIN_BUTTON(_neomoonclock->gui.hour_spin_button)),
@@ -198,6 +226,7 @@ static void timer_start_pause_button_action(GtkWidget* _widget, neomoonclock_t* 
 		}
 		
 		pthread_create(&_neomoonclock->timer_thread, NULL, timer_run, _neomoonclock);
+		pthread_detach(_neomoonclock->timer_thread);
 	}
 }
 
@@ -215,7 +244,9 @@ static void* timer_run(void* _arg) {
 		nanosleep(&duration, &remaining);
 	}
 	
-	timer_finished(neomoonclock);
+	if(neomoonclock->timer_counter_in_seconds <= 0) {
+		timer_finished(neomoonclock);
+	}
 	return NULL;
 }
 
@@ -236,7 +267,7 @@ static void timer_view_button_action(GtkWidget* _widget, neomoonclock_t* _neomoo
 	gtk_window_set_default_size(GTK_WINDOW(timer_view_window), 196, 100);
 	gtk_window_set_gravity(GTK_WINDOW(timer_view_window), GDK_GRAVITY_NORTH_EAST);
 	gtk_window_move(GTK_WINDOW(timer_view_window), 0, 0);
-	gtk_window_set_transient_for(GTK_WINDOW(timer_view_window), _neomoonclock->gui.window);
+	gtk_window_set_transient_for(GTK_WINDOW(timer_view_window), GTK_WINDOW(_neomoonclock->gui.window));
 	
 	GtkWidget* timer_view_window_grid = gtk_grid_new();
 	_neomoonclock->gui.timer_view_window_grid = timer_view_window_grid;
@@ -268,13 +299,31 @@ static void timer_view_window_close_action(GtkWidget* _widget, neomoonclock_t* _
 	_neomoonclock->gui.timer_view_window_grid = NULL;
 	_neomoonclock->gui.timer_view_window_time_display_label = NULL;
 	_neomoonclock->gui.timer_view_window_progress_bar = NULL;
+	_neomoonclock->timer_viewing = false;
 	
 	gtk_widget_set_sensitive(_neomoonclock->gui.timer_view_button, TRUE);
 }
 
 static void timer_update_gui(neomoonclock_t* _neomoonclock) {
-	static gchar timer_label_string[9];
-	sprintf(timer_label_string, "%02ld:%02ld:%02ld", _neomoonclock->timer_counter_in_seconds / 3600, _neomoonclock->timer_counter_in_seconds / 60, _neomoonclock->timer_counter_in_seconds % 60);
+	gdouble hour_duration = gtk_spin_button_get_value(GTK_SPIN_BUTTON(_neomoonclock->gui.hour_spin_button)),
+			minute_duration = gtk_spin_button_get_value(GTK_SPIN_BUTTON(_neomoonclock->gui.minute_spin_button)),
+			second_duration = gtk_spin_button_get_value(GTK_SPIN_BUTTON(_neomoonclock->gui.second_spin_button));
+	
+	uint64_t timer_time_in_seconds = hour_duration * 3600 + minute_duration * 60 + second_duration;
+	
+	if(hour_duration == 0 && minute_duration == 0 && second_duration == 0) {
+		// causes visual bug when updating with all 0 values
+		// probably because of the division
+		return;
+	}
+	
+	if(_neomoonclock->timer_time_in_seconds != timer_time_in_seconds) {
+		_neomoonclock->timer_time_in_seconds = timer_time_in_seconds;
+		_neomoonclock->timer_counter_in_seconds = timer_time_in_seconds;
+	}
+	
+	static gchar timer_label_string[9 + 14]; // added 14 to avoid the warnings
+	sprintf(timer_label_string, "%02lu:%02lu:%02lu", _neomoonclock->timer_counter_in_seconds / 3600, _neomoonclock->timer_counter_in_seconds % 3600 / 60, _neomoonclock->timer_counter_in_seconds % 60);
 	gdouble progress_bar_fraction = (gdouble) _neomoonclock->timer_counter_in_seconds / (gdouble) _neomoonclock->timer_time_in_seconds;
 	
 	gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(_neomoonclock->gui.timer_progress_bar), progress_bar_fraction);
@@ -288,4 +337,130 @@ static void timer_update_gui(neomoonclock_t* _neomoonclock) {
 
 static void timer_finished(neomoonclock_t* _neomoonclock) {
 	notification_notify("neomoonclock timer", "Timer has finished");
+}
+
+// --- stopwatch
+
+static void stopwatch_start_pause_button_action(GtkWidget* _widget, neomoonclock_t* _neomoonclock) {
+	_neomoonclock->stopwatch_running = !_neomoonclock->stopwatch_running;
+	
+	if(_neomoonclock->stopwatch_running) {
+		gtk_widget_set_sensitive(_neomoonclock->gui.stopwatch_reset_button, FALSE);
+		
+		if(time_get_current_nanotime(&_neomoonclock->stopwatch_start_time_ns) == false) {
+			GtkWidget* dialog = gtk_message_dialog_new(GTK_WINDOW(_neomoonclock->gui.window),
+								GTK_DIALOG_MODAL,
+								GTK_MESSAGE_ERROR,
+								GTK_BUTTONS_OK,
+								"An unexpected error occured when starting the timer");
+			gtk_dialog_run(GTK_DIALOG(dialog));
+			gtk_widget_destroy(dialog);
+			return;
+		}
+		
+		pthread_create(&_neomoonclock->stopwatch_thread, NULL, stopwatch_run, _neomoonclock);
+		pthread_detach(_neomoonclock->stopwatch_thread);
+	} else {
+		gtk_widget_set_sensitive(_neomoonclock->gui.stopwatch_reset_button, TRUE);
+	}
+}
+
+static void* stopwatch_run(void* _arg) {
+	neomoonclock_t* neomoonclock = (neomoonclock_t*) _arg;
+	
+	struct timespec duration = {0, 50000000ULL}, 
+					remaining;
+	
+	uint64_t current_time_ns;
+	uint64_t elapsed_time_ns;
+	
+	while(neomoonclock->stopwatch_running) {
+		if(time_get_current_nanotime(&current_time_ns) == false) {
+			continue;
+		}
+		
+		elapsed_time_ns = current_time_ns - neomoonclock->stopwatch_start_time_ns + neomoonclock->stopwatch_paused_time_ns;
+		neomoonclock->stopwatch_elapsed_time_ns = elapsed_time_ns;
+		
+		stopwatch_update_gui(neomoonclock);
+		
+		nanosleep(&duration, &remaining);
+	}
+	
+	neomoonclock->stopwatch_paused_time_ns = elapsed_time_ns;
+	
+	return NULL;
+}
+
+static void stopwatch_reset_button_action(GtkWidget* _widget, neomoonclock_t* _neomoonclock) {
+	_neomoonclock->stopwatch_paused_time_ns = 0;
+	_neomoonclock->stopwatch_elapsed_time_ns = 0;
+	
+	stopwatch_update_gui(_neomoonclock);
+}
+
+static void stopwatch_view_button_action(GtkWidget* _widget, neomoonclock_t* _neomoonclock) {
+	_neomoonclock->stopwatch_viewing = true;
+	
+	gtk_widget_set_sensitive(_neomoonclock->gui.stopwatch_view_button, FALSE);
+	
+	GtkWidget* stopwatch_view_window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+	_neomoonclock->gui.stopwatch_view_window = stopwatch_view_window;
+	gtk_window_set_title(GTK_WINDOW(stopwatch_view_window), "neomoonclock stopwatch");
+	gtk_window_set_keep_above(GTK_WINDOW(stopwatch_view_window), TRUE);
+	gtk_window_set_default_size(GTK_WINDOW(stopwatch_view_window), 196, 100);
+	gtk_window_set_gravity(GTK_WINDOW(stopwatch_view_window), GDK_GRAVITY_NORTH_EAST);
+	gtk_window_move(GTK_WINDOW(stopwatch_view_window), 0, 0);
+	gtk_window_set_transient_for(GTK_WINDOW(stopwatch_view_window), GTK_WINDOW(_neomoonclock->gui.window));
+	
+	GtkWidget* stopwatch_view_window_grid = gtk_grid_new();
+	_neomoonclock->gui.stopwatch_view_window_grid = stopwatch_view_window_grid;
+	gtk_grid_set_column_homogeneous(GTK_GRID(stopwatch_view_window_grid), TRUE);
+	gtk_grid_set_column_spacing(GTK_GRID(stopwatch_view_window_grid), 5);
+	gtk_container_set_border_width(GTK_CONTAINER(stopwatch_view_window_grid), 5);
+	
+	GtkWidget* stopwatch_view_window_time_display_label = gtk_label_new("00:00:00.000");
+	_neomoonclock->gui.stopwatch_view_window_time_display_label = stopwatch_view_window_time_display_label;
+	gtk_label_set_justify(GTK_LABEL(stopwatch_view_window_time_display_label), GTK_JUSTIFY_CENTER);
+	
+	GtkWidget* stopwatch_view_window_start_pause_button = gtk_button_new_with_label("Start/Pause");
+	_neomoonclock->gui.stopwatch_view_window_start_pause_button = stopwatch_view_window_start_pause_button;
+	g_signal_connect(stopwatch_view_window_start_pause_button, "clicked", G_CALLBACK(stopwatch_start_pause_button_action), _neomoonclock);
+	
+	gtk_container_add(GTK_CONTAINER(stopwatch_view_window_grid), stopwatch_view_window_time_display_label);
+	gtk_grid_attach_next_to(GTK_GRID(stopwatch_view_window_grid), stopwatch_view_window_start_pause_button, stopwatch_view_window_time_display_label, GTK_POS_BOTTOM, 1, 1);
+	
+	gtk_container_add(GTK_CONTAINER(stopwatch_view_window), stopwatch_view_window_grid);
+	
+	g_signal_connect(stopwatch_view_window, "destroy", G_CALLBACK(stopwatch_view_window_close_action), _neomoonclock);
+	
+	gtk_widget_show_all(_neomoonclock->gui.stopwatch_view_window);
+	stopwatch_update_gui(_neomoonclock);
+}
+
+static void stopwatch_view_window_close_action(GtkWidget* _widget, neomoonclock_t* _neomoonclock) {
+	gtk_widget_destroy(_neomoonclock->gui.stopwatch_view_window);
+	_neomoonclock->gui.stopwatch_view_window = NULL;
+	_neomoonclock->gui.stopwatch_view_window_grid = NULL;
+	_neomoonclock->gui.stopwatch_view_window_time_display_label = NULL;
+	_neomoonclock->gui.stopwatch_view_window_start_pause_button = NULL;
+	_neomoonclock->stopwatch_viewing = false;
+	
+	gtk_widget_set_sensitive(_neomoonclock->gui.stopwatch_view_button, TRUE);
+}
+
+static void stopwatch_update_gui(neomoonclock_t* _neomoonclock) {
+	static char time_display_label_string[13];
+	
+	uint64_t elapsed_time_ms = _neomoonclock->stopwatch_elapsed_time_ns / 1000000ULL,
+			elapsed_time_s = _neomoonclock->stopwatch_elapsed_time_ns / 1000000000ULL,
+			elapsed_time_min = _neomoonclock->stopwatch_elapsed_time_ns / 60000000000ULL,
+			elapsed_time_hr = _neomoonclock->stopwatch_elapsed_time_ns / 3600000000000ULL;
+	
+	sprintf(time_display_label_string, "%02lu:%02lu:%02lu.%03lu", elapsed_time_hr % 100, elapsed_time_min % 100, elapsed_time_s % 100, elapsed_time_ms % 1000);
+	gtk_label_set_text(GTK_LABEL(_neomoonclock->gui.stopwatch_time_display_label), time_display_label_string);
+	
+	if(_neomoonclock->stopwatch_viewing) {
+		gtk_label_set_text(GTK_LABEL(_neomoonclock->gui.stopwatch_view_window_time_display_label), time_display_label_string);
+	}
 }

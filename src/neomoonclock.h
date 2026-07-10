@@ -2,6 +2,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <time.h>
 #include <gtk/gtk.h>
 #include <pthread.h>
 
@@ -35,6 +36,10 @@ typedef struct neomoonclock_gui {
 	GtkWidget* stopwatch_start_pause_button,
 			* stopwatch_reset_button,
 			* stopwatch_view_button;
+	GtkWidget* stopwatch_view_window;
+	GtkWidget* stopwatch_view_window_grid;
+	GtkWidget* stopwatch_view_window_time_display_label;
+	GtkWidget* stopwatch_view_window_start_pause_button;
 	// --- alarm components
 	GtkWidget* alarm_frame;
 	GtkWidget* alarm_grid;
@@ -50,11 +55,19 @@ typedef struct neomoonclock_gui {
 
 typedef struct neomoonclock {
 	neomoonclock_gui_t gui;
+	
 	uint64_t timer_time_in_seconds,
 			timer_counter_in_seconds;
 	bool timer_running;
 	bool timer_viewing;
 	pthread_t timer_thread;
+	
+	bool stopwatch_running;
+	bool stopwatch_viewing;
+	uint64_t stopwatch_start_time_ns;
+	uint64_t stopwatch_paused_time_ns;
+	uint64_t stopwatch_elapsed_time_ns;
+	pthread_t stopwatch_thread;
 } neomoonclock_t;
 
 void neomoonclock_init(neomoonclock_t* _neomoonclock);
