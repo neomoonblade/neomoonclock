@@ -72,7 +72,6 @@ void stopwatch_view_button_action(GtkWidget* _widget, neomoonclock_t* _neomooncl
 	gtk_window_set_default_size(GTK_WINDOW(stopwatch_view_window), 196, 100);
 	gtk_window_set_gravity(GTK_WINDOW(stopwatch_view_window), GDK_GRAVITY_NORTH_EAST);
 	gtk_window_move(GTK_WINDOW(stopwatch_view_window), 0, 0);
-	gtk_window_set_transient_for(GTK_WINDOW(stopwatch_view_window), GTK_WINDOW(_neomoonclock->gui.window));
 	
 	GtkWidget* stopwatch_view_window_grid = gtk_grid_new();
 	_neomoonclock->gui.stopwatch_view_window_grid = stopwatch_view_window_grid;

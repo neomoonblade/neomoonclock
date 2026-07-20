@@ -45,10 +45,7 @@ void* alarm_run(void* _arg) {
 		}
 		
 		if(alarm_total_minute == current_total_minute) {
-			notification_notify("neomoonclock alarm", "Alarm!");
-			neomoonclock->alarm_running = false;
-			gtk_widget_set_sensitive(neomoonclock->gui.alarm_hour_spin_button, TRUE);
-			gtk_widget_set_sensitive(neomoonclock->gui.alarm_minute_spin_button, TRUE);
+			alarm_finished(neomoonclock);
 		}
 		
 		nanosleep(&duration, &remaining);
@@ -57,3 +54,8 @@ void* alarm_run(void* _arg) {
 	return NULL;
 }
 
+void alarm_finished(neomoonclock_t* _neomoonclock) {
+	notification_notify("neomoonclock alarm", "Alarm!");
+	_neomoonclock->alarm_running = false;
+	gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(_neomoonclock->gui.alarm_enabled_check_button), FALSE);
+}
